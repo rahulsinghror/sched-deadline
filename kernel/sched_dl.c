@@ -943,7 +943,7 @@ struct task_struct *pick_next_task_dl(struct rq *rq)
 	BUG_ON(!dl_se);
 
 	p = dl_task_of(dl_se);
-	p->se.exec_start = rq->clock;
+	p->se.exec_start = rq->clock_task;
 
 	/* Running task will never be pushed. */
 	if (p)
@@ -1011,7 +1011,7 @@ static void set_curr_task_dl(struct rq *rq)
 {
 	struct task_struct *p = rq->curr;
 
-	p->se.exec_start = rq->clock;
+	p->se.exec_start = rq->clock_task;
 
 	/* You can't push away the running task */
 	dequeue_pushable_dl_task(rq, p);
