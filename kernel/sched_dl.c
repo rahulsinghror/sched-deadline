@@ -1006,7 +1006,7 @@ static void task_dead_dl(struct task_struct *p)
 	dl_b->total_bw -= p->dl.dl_bw;
 	raw_spin_unlock_irq(&dl_b->lock);
 
-	hrtimer_try_to_cancel(timer);
+	hrtimer_cancel(timer);
 }
 
 static void set_curr_task_dl(struct rq *rq)
