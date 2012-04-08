@@ -143,7 +143,7 @@ static void enqueue_pushable_dl_task(struct rq *rq, struct task_struct *p)
 		parent = *link;
 		entry = rb_entry(parent, struct task_struct,
 				 pushable_dl_tasks);
-		if (!dl_entity_preempt(&entry->dl, &p->dl))
+		if (dl_entity_preempt(&p->dl, &entry->dl))
 			link = &parent->rb_left;
 		else {
 			link = &parent->rb_right;
@@ -459,7 +459,7 @@ static enum hrtimer_restart dl_task_timer(struct hrtimer *timer)
 		 * Queueing this task back might have overloaded rq,
 		 * check if we need to kick someone away.
 		 */
-		if (rq->dl.overloaded)
+		if (has_pushable_dl_tasks(rq))
 			push_dl_task(rq);
 #endif
 	}
@@ -571,7 +571,7 @@ static void update_curr_dl(struct rq *rq)
 
 static struct task_struct *pick_next_earliest_dl_task(struct rq *rq, int cpu);
 
-static inline int next_deadline(struct rq *rq)
+static inline u64 next_deadline(struct rq *rq)
 {
 	struct task_struct *next = pick_next_earliest_dl_task(rq, rq->cpu);
 
@@ -813,10 +813,11 @@ select_task_rq_dl(struct task_struct *p, int sd_flag, int flags)
 	struct rq *rq;
 	int cpu;
 
-	if (sd_flag != SD_BALANCE_WAKE)
-		return smp_processor_id();
-
 	cpu = task_cpu(p);
+
+	if (sd_flag != SD_BALANCE_WAKE && sd_flag != SD_BALANCE_FORK)
+		goto out;
+
 	rq = cpu_rq(cpu);
 
 	rcu_read_lock();
@@ -831,9 +832,9 @@ select_task_rq_dl(struct task_struct *p, int sd_flag, int flags)
 	 * other hand, if it has a shorter deadline, we
 	 * try to make it stay here, it might be important.
 	 */
-	if (unlikely(dl_task(rq->curr)) &&
-	    (rq->curr->dl.nr_cpus_allowed < 2 ||
-	     dl_entity_preempt(&rq->curr->dl, &p->dl)) &&
+	if (unlikely(dl_task(curr)) &&
+	    (curr->dl.nr_cpus_allowed < 2 ||
+	     !dl_entity_preempt(&p->dl, &curr->dl)) &&
 	    (p->dl.nr_cpus_allowed > 1)) {
 		int target = find_later_rq(p);
 
@@ -842,6 +843,7 @@ select_task_rq_dl(struct task_struct *p, int sd_flag, int flags)
 	}
 	rcu_read_unlock();
 
+out:
 	return cpu;
 }
 
@@ -875,7 +877,7 @@ static void check_preempt_equal_dl(struct rq *rq, struct task_struct *p)
 static void check_preempt_curr_dl(struct rq *rq, struct task_struct *p,
 				  int flags)
 {
-	if (dl_time_before(p->dl.deadline, rq->curr->dl.deadline)) {
+	if (dl_entity_preempt(&p->dl, &rq->curr->dl)) {
 		resched_task(rq->curr);
 		return;
 	}
