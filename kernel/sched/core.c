@@ -3293,7 +3293,7 @@ static inline void update_migrate_disable(struct task_struct *p)
 
 	if (p->sched_class->set_cpus_allowed)
 		p->sched_class->set_cpus_allowed(p, mask);
-	p->rt.nr_cpus_allowed = cpumask_weight(mask);
+	p->nr_cpus_allowed = cpumask_weight(mask);
 
 	/* Let migrate_enable know to fix things back up */
 	p->migrate_disable |= MIGRATE_DISABLE_SET_AFFIN;
@@ -3369,7 +3369,7 @@ void migrate_enable(void)
 		mask = tsk_cpus_allowed(p);
 		if (p->sched_class->set_cpus_allowed)
 			p->sched_class->set_cpus_allowed(p, mask);
-		p->rt.nr_cpus_allowed = cpumask_weight(mask);
+		p->nr_cpus_allowed = cpumask_weight(mask);
 		raw_spin_unlock_irqrestore(&rq->lock, flags);
 	} else
 		p->migrate_disable = 0;
@@ -5501,7 +5501,7 @@ void do_set_cpus_allowed(struct task_struct *p, const struct cpumask *new_mask)
 	if (!migrate_disabled_updated(p)) {
 		if (p->sched_class && p->sched_class->set_cpus_allowed)
 			p->sched_class->set_cpus_allowed(p, new_mask);
-		p->rt.nr_cpus_allowed = cpumask_weight(new_mask);
+		p->nr_cpus_allowed = cpumask_weight(new_mask);
 		p->dl.nr_cpus_allowed = cpumask_weight(new_mask);
 	}
 	cpumask_copy(&p->cpus_allowed, new_mask);
