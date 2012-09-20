@@ -8093,10 +8093,15 @@ static u64 actual_dl_runtime(void)
 		return (dl_runtime * rt_runtime) / period;
 }
 
-static int check_dl_bw(u64 new_bw)
+static int check_dl_bw(void)
 {
+	u64 runtime, period, dl_actual_runtime, new_bw;
 	int i;
 
+	runtime = global_rt_runtime();
+	period = global_rt_period();
+	dl_actual_runtime = actual_dl_runtime();
+	new_bw = to_ratio(period, dl_actual_runtime);
 	/*
 	 * Here we want to check the bandwidth not being set to some
 	 * value smaller than the currently allocated bandwidth in
@@ -8327,7 +8332,7 @@ long sched_group_rt_period(struct task_group *tg)
 
 static int sched_rt_global_constraints(void)
 {
-	u64 runtime, period, dl_actual_runtime, new_dl_bw;
+	u64 runtime, period;
 	int ret = 0;
 
 	if (sysctl_sched_rt_period <= 0)
@@ -8335,8 +8340,6 @@ static int sched_rt_global_constraints(void)
 
 	runtime = global_rt_runtime();
 	period = global_rt_period();
-	dl_actual_runtime = actual_dl_runtime();
-	new_dl_bw = to_ratio(period, dl_actual_runtime);
 
 	/*
 	 * Sanity check on the sysctl variables.
@@ -8348,7 +8351,7 @@ static int sched_rt_global_constraints(void)
 	 * Check if changing rt_bw could have negative effects
 	 * on dl_bw
 	 */
-	ret = check_dl_bw(new_dl_bw);
+	ret = check_dl_bw();
 	if (ret)
 		return ret;
 
@@ -8373,7 +8376,6 @@ int sched_rt_can_attach(struct task_group *tg, struct task_struct *tsk)
 #else /* !CONFIG_RT_GROUP_SCHED */
 static int sched_rt_global_constraints(void)
 {
-	u64 runtime, period, dl_actual_runtime, new_dl_bw;
 	unsigned long flags;
 	int i, ret;
 
@@ -8391,11 +8393,7 @@ static int sched_rt_global_constraints(void)
 	 * Check if changing rt_bw could have negative effects
 	 * on dl_bw
 	 */
-	runtime = global_rt_runtime();
-	period = global_rt_period();
-	dl_actual_runtime = actual_dl_runtime();
-	new_dl_bw = to_ratio(period, dl_actual_runtime);
-	ret = check_dl_bw(new_dl_bw);
+	ret = check_dl_bw();
 	if (ret)
 		return ret;
 
@@ -8426,14 +8424,13 @@ static int sched_dl_global_constraints(void)
 {
 	u64 period = global_rt_period();
 	u64 dl_actual_runtime = actual_dl_runtime();
-	u64 new_bw = to_ratio(period, dl_actual_runtime);
 	int ret;
 
 	ret = __sched_dl_global_constraints(dl_actual_runtime, period);
 	if (ret)
 		return ret;
 
-	ret = check_dl_bw(new_bw);
+	ret = check_dl_bw();
 	if (ret)
 		return ret;
 

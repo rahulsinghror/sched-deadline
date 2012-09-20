@@ -124,7 +124,6 @@ struct rt_bandwidth {
 struct dl_bandwidth {
 	raw_spinlock_t dl_runtime_lock;
 	u64 dl_runtime;
-	//u64 dl_actual_runtime;
 };
 
 static inline int dl_bandwidth_enabled(void)
