@@ -411,6 +411,9 @@ struct dl_rq {
 	 */
 	struct rb_root pushable_dl_tasks_root;
 	struct rb_node *pushable_dl_tasks_leftmost;
+#else
+	struct dl_bw dl_bw;
+#endif
 #ifdef PM_DEAD_SCHED
 	/*
 	 * Each active server contributes to running load. This variable
@@ -419,9 +422,6 @@ struct dl_rq {
 	 * its job.
 	 */
 	u64 running_bw;
-#endif
-#else
-	struct dl_bw dl_bw;
 #endif
 };
 
