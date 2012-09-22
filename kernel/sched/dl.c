@@ -693,7 +693,7 @@ static inline void dec_dl_deadline(struct dl_rq *dl_rq, u64 deadline) {}
 
 #endif /* CONFIG_SMP */
 
-#ifdef PM_DEAD_SCHED
+#ifdef CONFIG_PM_DEAD_SCHED
 
 static void add_running_bw(struct dl_rq *dl_rq, struct sched_dl_entity *dl_se)
 {
@@ -709,7 +709,12 @@ static void clear_running_bw(struct dl_rq *dl_rq, struct sched_dl_entity *dl_se)
 	dl_rq->running_bw -= se_bw;
 }
 
-#endif /* PM_DEAD_SCHED */
+#else
+
+static void add_running_bw(struct dl_rq *dl_rq, struct sched_dl_entity *dl_se) {}
+static void clear_running_bw(struct dl_rq *dl_rq, struct sched_dl_entity *dl_se) {}
+
+#endif /* CONFIG_PM_DEAD_SCHED */
 
 static inline
 void inc_dl_tasks(struct sched_dl_entity *dl_se, struct dl_rq *dl_rq)
@@ -835,9 +840,7 @@ static void enqueue_task_dl(struct rq *rq, struct task_struct *p, int flags)
 		return;
 
 	enqueue_dl_entity(&p->dl, pi_se, flags);
-#ifdef PM_DEAD_SCHED
-	add_running_bw(rq->dl);
-#endif
+	add_running_bw(&rq->dl, pi_se);
 
 	if (!task_current(rq, p) && p->dl.nr_cpus_allowed > 1)
 		enqueue_pushable_dl_task(rq, p);
@@ -853,9 +856,7 @@ static void dequeue_task_dl(struct rq *rq, struct task_struct *p, int flags)
 {
 	update_curr_dl(rq);
 	__dequeue_task_dl(rq, p, flags);
-#ifdef PM_DEAD_SCHED
-	clear_running_bw(rq->dl);
-#endif
+	clear_running_bw(&rq->dl, &p->dl);
 }
 
 /*

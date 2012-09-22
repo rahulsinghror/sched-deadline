@@ -272,6 +272,9 @@ void print_dl_rq(struct seq_file *m, int cpu, struct dl_rq *dl_rq)
 	SEQ_printf(m, "  .%-30s: %Ld.%06ld\n", #x, SPLIT_NS(dl_rq->x))
 
 	P(dl_nr_running);
+#ifdef CONFIG_PM_DEAD_SCHED
+	P(running_bw);
+#endif
 	PN(exec_clock);
 	__PN(min_deadline);
 	__PN(max_deadline);

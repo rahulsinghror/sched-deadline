@@ -414,7 +414,7 @@ struct dl_rq {
 #else
 	struct dl_bw dl_bw;
 #endif
-#ifdef PM_DEAD_SCHED
+#ifdef CONFIG_PM_DEAD_SCHED
 	/*
 	 * Each active server contributes to running load. This variable
 	 * is incremented every time a server becomes active and decremented
