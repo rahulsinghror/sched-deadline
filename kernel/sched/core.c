@@ -8089,19 +8089,18 @@ static u64 actual_dl_runtime(void)
 	 */
 	if (dl_runtime == RUNTIME_INF)
 		return RUNTIME_INF;
-	else
-		return (dl_runtime * rt_runtime) / period;
+
+	return (dl_runtime * rt_runtime) / period;
 }
 
 static int check_dl_bw(void)
 {
-	u64 runtime, period, dl_actual_runtime, new_bw;
 	int i;
+	u64 runtime = global_rt_runtime();
+	u64 period = global_rt_period();
+	u64 dl_actual_runtime = actual_dl_runtime();
+	u64 new_bw = to_ratio(period, dl_actual_runtime);
 
-	runtime = global_rt_runtime();
-	period = global_rt_period();
-	dl_actual_runtime = actual_dl_runtime();
-	new_bw = to_ratio(period, dl_actual_runtime);
 	/*
 	 * Here we want to check the bandwidth not being set to some
 	 * value smaller than the currently allocated bandwidth in
