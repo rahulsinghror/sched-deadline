@@ -270,3 +270,9 @@ config PM_GENERIC_DOMAINS_RUNTIME
 config CPU_PM
 	bool
 	depends on SUSPEND || CPU_IDLE
+
+config PM_DEAD_SCHED
+	bool "(EXPERIMENTAL) Power Aware Deadline Scheduling"
+	---help---
+	 Enable this to change SCHED_DEADLINE default behavior for Heterogenous
+	 multiprocessor systems.

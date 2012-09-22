@@ -411,6 +411,15 @@ struct dl_rq {
 	 */
 	struct rb_root pushable_dl_tasks_root;
 	struct rb_node *pushable_dl_tasks_leftmost;
+#ifdef PM_DEAD_SCHED
+	/*
+	 * Each active server contributes to running load. This variable
+	 * is incremented every time a server becomes active and decremented
+	 * when its runtime has been depleted or the contained task has done
+	 * its job.
+	 */
+	u64 running_bw;
+#endif
 #else
 	struct dl_bw dl_bw;
 #endif
