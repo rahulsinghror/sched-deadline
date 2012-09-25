@@ -8096,7 +8096,6 @@ static u64 actual_dl_runtime(void)
 static int check_dl_bw(void)
 {
 	int i;
-	u64 runtime = global_rt_runtime();
 	u64 period = global_rt_period();
 	u64 dl_actual_runtime = actual_dl_runtime();
 	u64 new_bw = to_ratio(period, dl_actual_runtime);
