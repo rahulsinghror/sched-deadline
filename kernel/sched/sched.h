@@ -68,6 +68,22 @@ static inline int task_has_dl_policy(struct task_struct *p)
 	return dl_policy(p->policy);
 }
 
+#ifdef CONFIG_PM_DEAD_SCHED
+static inline bool dl_bw_smaller(u64 a, u64 b)
+{
+	return (s64)(a - b) < 0;
+}
+
+/*
+ * Tells if entity @a is smaller than entity @b.
+ */
+static inline bool
+dl_entity_smaller(struct sched_dl_entity *a, struct sched_dl_entity *b)
+{
+	return dl_bw_smaller(a->deadline, b->deadline);
+}
+#endif /* CONFIG_PM_DEAD_SCHED */
+
 static inline bool dl_time_before(u64 a, u64 b)
 {
 	return (s64)(a - b) < 0;
@@ -398,7 +414,11 @@ struct dl_rq {
 	struct {
 		u64 curr;
 		u64 next;
+#ifdef CONFIG_PM_DEAD_SCHED
+	} smallest_bw;
+#else
 	} earliest_dl;
+#endif /* CONFIG_PM_DEAD_SCHED */
 
 	unsigned long dl_nr_migratory;
 	unsigned long dl_nr_total;
@@ -422,7 +442,7 @@ struct dl_rq {
 	 * its job.
 	 */
 	u64 running_bw;
-#endif
+#endif /* CONFIG_PM_DEAD_SCHED */
 };
 
 #ifdef CONFIG_SCHED_DEBUG

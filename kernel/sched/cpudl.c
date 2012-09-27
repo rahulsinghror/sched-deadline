@@ -30,6 +30,15 @@ static inline int right_child(int i)
 	return (i << 1) + 2;
 }
 
+#ifdef CONFIG_PM_DEAD_SCHED
+
+static inline int dl_bw_smaller(u64 a, u64 b)
+{
+	return (s64)(a - b) < 0;
+}
+
+#endif /* CONFIG_PM_DEAD_SCHED */
+
 static inline int dl_time_before(u64 a, u64 b)
 {
 	return (s64)(a - b) < 0;
@@ -53,11 +62,21 @@ void cpudl_heapify(struct cpudl *cp, int idx)
 		r = right_child(idx);
 		largest = idx;
 
+#ifdef CONFIG_PM_DEAD_SCHED
+		if ((l < cp->size) && dl_bw_smaller(cp->elements[idx].bw,
+							cp->elements[l].bw))
+#else
 		if ((l < cp->size) && dl_time_before(cp->elements[idx].dl,
 							cp->elements[l].dl))
+#endif /* CONFIG_PM_DEAD_SCHED */
 			largest = l;
+#ifdef CONFIG_PM_DEAD_SCHED
+		if ((r < cp->size) && dl_bw_smaller(cp->elements[largest].bw,
+							cp->elements[r].bw))
+#else
 		if ((r < cp->size) && dl_time_before(cp->elements[largest].dl,
 							cp->elements[r].dl))
+#endif /* CONFIG_PM_DEAD_SCHED */
 			largest = r;
 		if (largest == idx)
 			break;
@@ -68,6 +87,24 @@ void cpudl_heapify(struct cpudl *cp, int idx)
 	}
 }
 
+#ifdef CONFIG_PM_DEAD_SCHED
+void cpudl_change_key(struct cpudl *cp, int idx, u64 new_bw)
+{
+	WARN_ON(idx > num_present_cpus() && idx != -1);
+
+	if (dl_bw_smaller(new_bw, cp->elements[idx].bw)) {
+		cp->elements[idx].bw = new_bw;
+		cpudl_heapify(cp, idx);
+	} else {
+		cp->elements[idx].bw = new_bw;
+		while (idx > 0 && dl_bw_smaller(cp->elements[parent(idx)].bw,
+					cp->elements[idx].bw)) {
+			cpudl_exchange(cp, idx, parent(idx));
+			idx = parent(idx);
+		}
+	}
+}
+#else
 void cpudl_change_key(struct cpudl *cp, int idx, u64 new_dl)
 {
 	WARN_ON(idx > num_present_cpus() && idx != -1);
@@ -84,6 +121,7 @@ void cpudl_change_key(struct cpudl *cp, int idx, u64 new_dl)
 		}
 	}
 }
+#endif /* CONFIG_PM_DEAD_SCHED */
 
 static inline int cpudl_maximum(struct cpudl *cp)
 {
@@ -110,7 +148,11 @@ int cpudl_find(struct cpudl *cp, struct cpumask *dlo_mask,
 		best_cpu = cpumask_any(later_mask);
 		goto out;
 	} else if (cpumask_test_cpu(cpudl_maximum(cp), &p->cpus_allowed) &&
+#ifdef CONFIG_PM_DEAD_SCHED
+			dl_bw_smaller(dl_se->dl_bw, cp->elements[0].bw)) {
+#else
 			dl_time_before(dl_se->deadline, cp->elements[0].dl)) {
+#endif /* CONFIG_PM_DEAD_SCHED */
 		best_cpu = cpudl_maximum(cp);
 		if (later_mask)
 			cpumask_set_cpu(best_cpu, later_mask);
@@ -122,6 +164,61 @@ out:
 	return best_cpu;
 }
 
+#ifdef CONFIG_PM_DEAD_SCHED
+/*
+ * cpudl_set - update the cpudl max-heap
+ * @cp: the cpudl max-heap context
+ * @cpu: the target cpu
+ * @bw: the new dl bandwidth for this cpu
+ *
+ * Notes: assumes cpu_rq(cpu)->lock is locked
+ *
+ * Returns: (void)
+ */
+void cpudl_set(struct cpudl *cp, int cpu, u64 bw, int is_valid)
+{
+	int old_idx, new_cpu;
+	unsigned long flags;
+
+	WARN_ON(cpu > num_present_cpus());
+
+	raw_spin_lock_irqsave(&cp->lock, flags);
+	old_idx = cp->cpu_to_idx[cpu];
+	if (!is_valid) {
+		/* remove item */
+		new_cpu = cp->elements[cp->size - 1].cpu;
+		cp->elements[old_idx].bw = cp->elements[cp->size - 1].bw;
+		cp->elements[old_idx].cpu = new_cpu;
+		cp->size--;
+		cp->cpu_to_idx[new_cpu] = old_idx;
+		cp->cpu_to_idx[cpu] = IDX_INVALID;
+		while (old_idx > 0 && dl_bw_smaller(
+				cp->elements[parent(old_idx)].bw,
+				cp->elements[old_idx].bw)) {
+			cpudl_exchange(cp, old_idx, parent(old_idx));
+			old_idx = parent(old_idx);
+		}
+		cpumask_set_cpu(cpu, cp->free_cpus);
+                cpudl_heapify(cp, old_idx);
+
+		goto out;
+	}
+
+	if (old_idx == IDX_INVALID) {
+		cp->size++;
+		cp->elements[cp->size - 1].bw = 0;
+		cp->elements[cp->size - 1].cpu = cpu;
+		cp->cpu_to_idx[cpu] = cp->size - 1;
+		cpudl_change_key(cp, cp->size - 1, bw);
+		cpumask_clear_cpu(cpu, cp->free_cpus);
+	} else {
+		cpudl_change_key(cp, old_idx, bw);
+	}
+
+out:
+	raw_spin_unlock_irqrestore(&cp->lock, flags);
+}
+#else
 /*
  * cpudl_set - update the cpudl max-heap
  * @cp: the cpudl max-heap context
@@ -175,6 +272,7 @@ void cpudl_set(struct cpudl *cp, int cpu, u64 dl, int is_valid)
 out:
 	raw_spin_unlock_irqrestore(&cp->lock, flags);
 }
+#endif /* CONFIG_PM_DEAD_SCHED */
 
 /*
  * cpudl_init - initialize the cpudl structure

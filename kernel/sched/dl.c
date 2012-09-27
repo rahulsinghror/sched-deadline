@@ -76,7 +76,11 @@ void init_dl_rq(struct dl_rq *dl_rq, struct rq *rq)
 
 #ifdef CONFIG_SMP
 	/* zero means no -deadline tasks */
+#ifdef CONFIG_PM_DEAD_SCHED
+	dl_rq->smallest_bw.curr = dl_rq->smallest_bw.next = 0;
+#else
 	dl_rq->earliest_dl.curr = dl_rq->earliest_dl.next = 0;
+#endif /* CONFIG_PM_DEAD_SCHED */
 
 	dl_rq->dl_nr_migratory = 0;
 	dl_rq->overloaded = 0;
@@ -171,7 +175,11 @@ static void enqueue_pushable_dl_task(struct rq *rq, struct task_struct *p)
 		parent = *link;
 		entry = rb_entry(parent, struct task_struct,
 				 pushable_dl_tasks);
+#ifdef CONFIG_PM_DEAD_SCHED
+		if (dl_entity_smaller(&p->dl, &entry->dl))
+#else
 		if (dl_entity_preempt(&p->dl, &entry->dl))
+#endif /* CONFIG_PM_DEAD_SCHED */
 			link = &parent->rb_left;
 		else {
 			link = &parent->rb_right;
@@ -626,6 +634,69 @@ static void update_curr_dl(struct rq *rq)
 
 #ifdef CONFIG_SMP
 
+#ifdef CONFIG_PM_DEAD_SCHED
+
+static struct task_struct *pick_next_smallest_dl_task(struct rq *rq, int cpu);
+
+static inline u64 next_bandwidth(struct rq *rq)
+{
+	struct task_struct *next = pick_next_smallest_dl_task(rq, rq->cpu);
+
+	if (next && dl_prio(next->prio))
+		return next->dl.dl_bw;
+	else
+		return 0;
+}
+
+static void inc_dl_bandwidth(struct dl_rq *dl_rq, u64 bandwidth)
+{
+	struct rq *rq = rq_of_dl_rq(dl_rq);
+
+	if (dl_rq->smallest_bw.curr == 0) {
+		/*
+		 * If the dl_rq had no -deadline tasks, the new task
+		 * becomes the smallest, and next is set to 0.
+		 */
+		dl_rq->smallest_bw.curr = bandwidth;
+		dl_rq->smallest_bw.next = 0;
+		cpudl_set(&rq->rd->cpudl, rq->cpu, bandwidth, 1);
+	} else if (dl_rq->smallest_bw.next == 0 ||
+		   dl_bw_smaller(bandwidth, dl_rq->smallest_bw.next)) {
+		/*
+		 * On the other hand, if the new -deadline task has a
+		 * a bigger bandwidth than the smallest one on dl_rq, but
+		 * it is smaller than the next (if any), we must
+		 * recompute the next-smallest.
+		 */
+		dl_rq->smallest_bw.next = next_bandwidth(rq);
+	}
+}
+
+static void dec_dl_bandwidth(struct dl_rq *dl_rq, u64 bandwidth)
+{
+	struct rq *rq = rq_of_dl_rq(dl_rq);
+
+	/*
+	 * Since we may have removed our earliest (and/or next earliest)
+	 * task we must recompute them.
+	 */
+	if (!dl_rq->dl_nr_running) {
+		dl_rq->smallest_bw.curr = 0;
+		dl_rq->smallest_bw.next = 0;
+		cpudl_set(&rq->rd->cpudl, rq->cpu, 0, 0);
+	} else {
+		struct rb_node *leftmost = dl_rq->rb_leftmost;
+		struct sched_dl_entity *entry;
+
+		entry = rb_entry(leftmost, struct sched_dl_entity, rb_node);
+		dl_rq->smallest_bw.curr = entry->dl_bw;
+		dl_rq->smallest_bw.next = next_bandwidth(rq);
+		cpudl_set(&rq->rd->cpudl, rq->cpu, entry->dl_bw, 1);
+	}
+}
+
+#else
+
 static struct task_struct *pick_next_earliest_dl_task(struct rq *rq, int cpu);
 
 static inline u64 next_deadline(struct rq *rq)
@@ -688,6 +759,8 @@ static void dec_dl_deadline(struct dl_rq *dl_rq, u64 deadline)
 	}
 }
 
+#endif /* CONFIG_PM_DEAD_SCHED */
+
 #else
 
 static inline void inc_dl_deadline(struct dl_rq *dl_rq, u64 deadline) {}
@@ -722,12 +795,20 @@ static inline
 void inc_dl_tasks(struct sched_dl_entity *dl_se, struct dl_rq *dl_rq)
 {
 	int prio = dl_task_of(dl_se)->prio;
+#ifdef CONFIG_PM_DEAD_SCHED
+	u64 bandwidth = dl_se->dl_bw;
+#else
 	u64 deadline = dl_se->deadline;
+#endif /* CONFIG_PM_DEAD_SCHED */
 
 	WARN_ON(!dl_prio(prio));
 	dl_rq->dl_nr_running++;
 
+#ifdef CONFIG_PM_DEAD_SCHED
+	inc_dl_bandwidth(dl_rq, bandwidth);
+#else
 	inc_dl_deadline(dl_rq, deadline);
+#endif /* CONFIG_PM_DEAD_SCHED */
 	inc_dl_migration(dl_se, dl_rq);
 }
 
@@ -740,7 +821,11 @@ void dec_dl_tasks(struct sched_dl_entity *dl_se, struct dl_rq *dl_rq)
 	WARN_ON(!dl_rq->dl_nr_running);
 	dl_rq->dl_nr_running--;
 
+#ifdef CONFIG_PM_DEAD_SCHED
+	dec_dl_bandwidth(dl_rq, dl_se->dl_bw);
+#else
 	dec_dl_deadline(dl_rq, dl_se->deadline);
+#endif /* CONFIG_PM_DEAD_SCHED */
 	dec_dl_migration(dl_se, dl_rq);
 }
 
@@ -916,7 +1001,11 @@ select_task_rq_dl(struct task_struct *p, int sd_flag, int flags)
 	 */
 	if (unlikely(dl_task(curr)) &&
 	    (curr->nr_cpus_allowed < 2 ||
+#ifdef CONFIG_PM_DEAD_SCHED
+	     !dl_entity_smaller(&p->dl, &curr->dl)) &&
+#else
 	     !dl_entity_preempt(&p->dl, &curr->dl)) &&
+#endif /* CONFIG_PM_DEAD_SCHED */
 	    (p->nr_cpus_allowed > 1)) {
 		int target = find_later_rq(p);
 
@@ -1115,6 +1204,36 @@ static int pick_dl_task(struct rq *rq, struct task_struct *p, int cpu)
 	return 0;
 }
 
+#ifdef CONFIG_PM_DEAD_SCHED
+
+/* 
+ * Returns the second smallest -deadline task, NULL otherwise.
+ * Since tasks on each rq are ordered by deadlines and we are
+ * instead interested on tasks' bandwidths, just use pushable
+ * trees.
+ */
+static struct task_struct *pick_next_smallest_dl_task(struct rq *rq, int cpu)
+{
+	struct rb_node *next_node = rq->dl.pushable_dl_tasks_leftmost;
+	struct sched_dl_entity *dl_se;
+	struct task_struct *p = NULL;
+
+next_node:
+	if (next_node) {
+		dl_se = rb_entry(next_node, struct sched_dl_entity, rb_node);
+		p = dl_task_of(dl_se);
+
+		if (pick_dl_task(rq, p, cpu))
+			return p;
+
+		goto next_node;
+	}
+
+	return NULL;
+}
+
+#else
+
 /* Returns the second earliest -deadline task, NULL otherwise */
 static struct task_struct *pick_next_earliest_dl_task(struct rq *rq, int cpu)
 {
@@ -1136,6 +1255,8 @@ next_node:
 
 	return NULL;
 }
+
+#endif /* CONFIG_PM_DEAD_SCHED */
 
 static DEFINE_PER_CPU(cpumask_var_t, local_cpu_mask_dl);
 
@@ -1246,6 +1367,19 @@ static struct rq *find_lock_later_rq(struct task_struct *task, struct rq *rq)
 			}
 		}
 
+#ifdef CONFIG_PM_DEAD_SCHED
+		/*
+		 * If the rq we found has no -deadline task, or
+		 * some other condition regarding actual CPU speed
+		 * and allocated bandwidth is met (TODO), the rq is
+		 * a good one. As a proof of concept let's use a simple
+		 * (probably meaningless) comparison between bandwidths.
+		 */
+		if (!later_rq->dl.dl_nr_running ||
+		    dl_bw_smaller(task->dl.dl_bw,
+				   later_rq->dl.smallest_bw.next))
+			break;
+#else
 		/*
 		 * If the rq we found has no -deadline task, or
 		 * its earliest one has a later deadline than our
@@ -1255,6 +1389,7 @@ static struct rq *find_lock_later_rq(struct task_struct *task, struct rq *rq)
 		    dl_time_before(task->dl.deadline,
 				   later_rq->dl.earliest_dl.curr))
 			break;
+#endif /* CONFIG_PM_DEAD_SCHED */
 
 		/* Otherwise we try again. */
 		double_unlock_balance(rq, later_rq);
@@ -1307,6 +1442,7 @@ retry:
 		return 0;
 	}
 
+#ifndef CONFIG_PM_DEAD_SCHED
 	/*
 	 * If next_task preempts rq->curr, and rq->curr
 	 * can move away, it makes sense to just reschedule
@@ -1318,6 +1454,7 @@ retry:
 		resched_task(rq->curr);
 		return 0;
 	}
+#endif
 
 	/* We might release rq lock */
 	get_task_struct(next_task);
@@ -1377,7 +1514,11 @@ static int pull_dl_task(struct rq *this_rq)
 	int this_cpu = this_rq->cpu, ret = 0, cpu;
 	struct task_struct *p;
 	struct rq *src_rq;
+#ifdef CONFIG_PM_DEAD_SCHED
+	u64 bwmin = LONG_MAX;
+#else
 	u64 dmin = LONG_MAX;
+#endif /* CONFIG_PM_DEAD_SCHED */
 
 	if (likely(!dl_overloaded(this_rq)))
 		return 0;
@@ -1393,8 +1534,13 @@ static int pull_dl_task(struct rq *this_rq)
 		 * we are fine with this.
 		 */
 		if (this_rq->dl.dl_nr_running &&
+#ifdef CONFIG_PM_DEAD_SCHED
+		    dl_bw_smaller(this_rq->dl.smallest_bw.curr,
+				   src_rq->dl.smallest_bw.next))
+#else
 		    dl_time_before(this_rq->dl.earliest_dl.curr,
 				   src_rq->dl.earliest_dl.next))
+#endif /* CONFIG_PM_DEAD_SCHED */
 			continue;
 
 		/* Might drop this_rq->lock */
@@ -1407,6 +1553,23 @@ static int pull_dl_task(struct rq *this_rq)
 		if (src_rq->dl.dl_nr_running <= 1)
 			goto skip;
 
+#ifdef CONFIG_PM_DEAD_SCHED
+		p = pick_next_smallest_dl_task(src_rq, this_cpu);
+
+		/*
+		 * We found a task to be pulled if:
+		 *  - it is smaller than our next (if there's one),
+		 *  - it is smaller than the last one we pulled (if any).
+		 *  - some other condition on CPU speed (TODO)
+		 */
+		if (p && dl_bw_smaller(p->dl.dl_bw, bwmin) &&
+		    (!this_rq->dl.dl_nr_running ||
+		     dl_time_before(p->dl.dl_bw,
+				    this_rq->dl.smallest_bw.next))) {
+			WARN_ON(p == src_rq->curr);
+			WARN_ON(!p->on_rq);
+
+#else
 		p = pick_next_earliest_dl_task(src_rq, this_cpu);
 
 		/*
@@ -1429,12 +1592,17 @@ static int pull_dl_task(struct rq *this_rq)
 					   src_rq->curr->dl.deadline))
 				goto skip;
 
+#endif /* CONFIG_PM_DEAD_SCHED */
 			ret = 1;
 
 			deactivate_task(src_rq, p, 0);
 			set_task_cpu(p, this_cpu);
 			activate_task(this_rq, p, 0);
+#ifdef CONFIG_PM_DEAD_SCHED
+			bwmin = p->dl.dl_bw;
+#else
 			dmin = p->dl.deadline;
+#endif /* CONFIG_PM_DEAD_SCHED */
 
 			/* Is there any other task even earlier? */
 		}
@@ -1469,7 +1637,11 @@ static void task_woken_dl(struct rq *rq, struct task_struct *p)
 	    p->nr_cpus_allowed > 1 &&
 	    dl_task(rq->curr) &&
 	    (rq->curr->nr_cpus_allowed < 2 ||
+#ifdef CONFIG_PM_DEAD_SCHED
+	     dl_entity_smaller(&rq->curr->dl, &p->dl))) {
+#else
 	     dl_entity_preempt(&rq->curr->dl, &p->dl))) {
+#endif /* CONFIG_PM_DEAD_SCHED */
 		push_dl_tasks(rq);
 	}
 }
@@ -1524,7 +1696,11 @@ static void rq_online_dl(struct rq *rq)
 		dl_set_overload(rq);
 
 	if (rq->dl.dl_nr_running > 0)
+#ifdef CONFIG_PM_DEAD_SCHED
+		cpudl_set(&rq->rd->cpudl, rq->cpu, rq->dl.smallest_bw.curr, 1);
+#else
 		cpudl_set(&rq->rd->cpudl, rq->cpu, rq->dl.earliest_dl.curr, 1);
+#endif /* CONFIG_PM_DEAD_SCHED */
 }
 
 /* Assumes rq->lock is held */
@@ -1608,6 +1784,9 @@ static void prio_changed_dl(struct rq *rq, struct task_struct *p,
 		if (!rq->dl.overloaded)
 			pull_dl_task(rq);
 
+#ifdef CONFIG_PM_DEAD_SCHED
+		/* TODO: Some check on the possible new bw */
+#else
 		/*
 		 * If we now have a earlier deadline task than p,
 		 * then reschedule, provided p is still on this
@@ -1616,6 +1795,7 @@ static void prio_changed_dl(struct rq *rq, struct task_struct *p,
 		if (dl_time_before(rq->dl.earliest_dl.curr, p->dl.deadline) &&
 		    rq->curr == p)
 			resched_task(p);
+#endif /* CONFIG_PM_DEAD_SCHED */
 #else
 		/*
 		 * Again, we don't know if p has a earlier

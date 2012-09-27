@@ -6,7 +6,11 @@
 #define IDX_INVALID     -1
 
 struct array_item {
+#ifdef CONFIG_PM_DEAD_SCHED
+	u64 bw;
+#else
 	u64 dl;
+#endif /* CONFIG_PM_DEAD_SCHED */
 	int cpu;
 };
 
@@ -22,7 +26,11 @@ struct cpudl {
 #ifdef CONFIG_SMP
 int cpudl_find(struct cpudl *cp, struct cpumask *dlo_mask,
 		struct task_struct *p, struct cpumask *later_mask);
+#ifdef CONFIG_PM_DEAD_SCHED
+void cpudl_set(struct cpudl *cp, int cpu, u64 bw, int is_valid);
+#else
 void cpudl_set(struct cpudl *cp, int cpu, u64 dl, int is_valid);
+#endif /* CONFIG_PM_DEAD_SCHED */
 int cpudl_init(struct cpudl *cp);
 void cpudl_cleanup(struct cpudl *cp);
 #else
