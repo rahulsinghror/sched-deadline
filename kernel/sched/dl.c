@@ -15,6 +15,8 @@
  *                    Fabio Checconi <fabio@gandalf.sssup.it>
  */
 #include <linux/math128.h>
+#include <linux/cpufreq.h>
+#include <linux/slab.h>
 #include "sched.h"
 
 struct dl_bandwidth def_dl_bandwidth;
@@ -58,6 +60,62 @@ void init_dl_bandwidth(struct dl_bandwidth *dl_b, u64 period, u64 runtime)
 
 extern unsigned long to_ratio(u64 period, u64 runtime);
 
+#ifdef CONFIG_PM_DEAD_SCHED
+/*
+ * Initializes the translation table between operating frequencies
+ * and available bandwidth for -dl tasks. Each row in the table
+ * corresponds to a threshold.
+ */
+void init_dl_trans_table(struct cpufreq_freq_bw_trans *trans_table,
+			 u64 *curr_thresh)
+{
+	struct cpufreq_frequency_table *table;
+	int i;
+	int count = 0;
+	unsigned int max_freq = 0;
+
+	table = cpufreq_frequency_get_table(smp_processor_id());
+	if (!table) {
+		printk(KERN_ERR "dl_rq: failed to get frequency table!\n");
+		return;
+	}
+	
+	for (i = 0; table[i].frequency != CPUFREQ_TABLE_END; i++) {
+		unsigned int freq = table[i].frequency;
+		if (freq == CPUFREQ_ENTRY_INVALID)
+			continue;
+		max_freq = freq;
+		count++;
+	}
+
+	trans_table = kzalloc(sizeof(struct cpufreq_freq_bw_trans) * (count + 1),
+			      GFP_KERNEL); 
+	if (!trans_table) {
+		printk(KERN_ERR "dl_rq: failed to allocate translation table!\n");
+		return;
+	}
+
+	for (i = 0; i < count; i++) {
+		trans_table[i].index = i;
+		trans_table[i].frequency = table[i].frequency;
+		trans_table[i].bandwidth = table[i].frequency / max_freq;
+	}
+	trans_table[count].index = count;
+	trans_table[count].frequency = CPUFREQ_ENTRY_INVALID;
+	trans_table[count].bandwidth = 0;
+
+	/* no -dl task at start, let's run as slow as we can */
+	*curr_thresh = trans_table[0].bandwidth;
+
+	printk(KERN_INFO "translation table for cpu %d\n", smp_processor_id());
+	for (i = 0; i < count + 1; i++)
+		printk(KERN_INFO "{%d,%d,%llu}\n", trans_table[i].index,
+		       trans_table[i].frequency, trans_table[i].bandwidth);
+	
+	return;
+}
+#endif /* CONFIG_PM_DEAD_SCHED */
+
 void init_dl_bw(struct dl_bw *dl_b)
 {
 	raw_spin_lock_init(&dl_b->lock);
@@ -78,6 +136,8 @@ void init_dl_rq(struct dl_rq *dl_rq, struct rq *rq)
 	/* zero means no -deadline tasks */
 #ifdef CONFIG_PM_DEAD_SCHED
 	dl_rq->smallest_bw.curr = dl_rq->smallest_bw.next = 0;
+	init_dl_trans_table(dl_rq->trans_table, &dl_rq->curr_thresh);
+	dl_rq->running_bw = 0;
 #else
 	dl_rq->earliest_dl.curr = dl_rq->earliest_dl.next = 0;
 #endif /* CONFIG_PM_DEAD_SCHED */

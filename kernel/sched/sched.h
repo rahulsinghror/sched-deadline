@@ -394,6 +394,14 @@ struct rt_rq {
 #endif
 };
 
+#ifdef CONFIG_PM_DEAD_SCHED
+struct cpufreq_freq_bw_trans {
+	unsigned int index;
+	unsigned int frequency;
+	u64 bandwidth;
+};
+#endif
+
 /* Deadline class' related fields in a runqueue */
 struct dl_rq {
 	/* runqueue is an rbtree, ordered by deadline */
@@ -442,6 +450,8 @@ struct dl_rq {
 	 * its job.
 	 */
 	u64 running_bw;
+	struct cpufreq_freq_bw_trans *trans_table;
+	u64 curr_thresh;
 #endif /* CONFIG_PM_DEAD_SCHED */
 };
 
