@@ -98,7 +98,7 @@ void init_dl_trans_table(struct cpufreq_freq_bw_trans *trans_table,
 	for (i = 0; i < count; i++) {
 		trans_table[i].index = i;
 		trans_table[i].frequency = table[i].frequency;
-		trans_table[i].bandwidth = table[i].frequency / max_freq;
+		trans_table[i].bandwidth = to_ratio(table[i].frequency, max_freq);
 	}
 	trans_table[count].index = count;
 	trans_table[count].frequency = CPUFREQ_ENTRY_INVALID;
