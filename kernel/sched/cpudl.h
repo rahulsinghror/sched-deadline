@@ -24,8 +24,8 @@ struct cpudl {
 
 
 #ifdef CONFIG_SMP
-int cpudl_find(struct cpudl *cp, struct cpumask *dlo_mask,
-		struct task_struct *p, struct cpumask *later_mask);
+int cpudl_find(struct cpudl *cp, struct task_struct *p,
+	       struct cpumask *later_mask);
 #ifdef CONFIG_PM_DEAD_SCHED
 void cpudl_set(struct cpudl *cp, int cpu, u64 bw, int is_valid);
 #else
